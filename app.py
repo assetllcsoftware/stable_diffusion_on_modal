@@ -12,15 +12,21 @@ from typing import Optional
 import io
 import base64
 
+# Get Hugging Face token from environment variable (will be set during deployment)
+HF_TOKEN = os.environ.get("HF_TOKEN", "")
+
 # Create a Modal image with all required dependencies
 image = modal.Image.debian_slim().pip_install(
-    "diffusers>=0.14.0",
-    "transformers>=4.25.1",
-    "accelerate>=0.16.0",
-    "torch>=2.0.0",
-    "pillow>=9.3.0",
-    "fastapi>=0.95.0",
+    "diffusers>=0.26.3",
+    "transformers>=4.36.2",
+    "accelerate>=0.27.2",
+    "torch>=2.2.0",
+    "pillow>=10.1.0",
+    "fastapi>=0.109.0",
     "python-dotenv>=1.0.0",
+    "safetensors>=0.4.1",
+    "huggingface-hub>=0.19.0",
+    "sentencepiece>=0.1.99",
 )
 
 # Add local Python modules to the image
@@ -46,22 +52,51 @@ fastapi_app.add_middleware(
     allow_headers=["*"],
 )
 
+# Try to get the Hugging Face token secret
+try:
+    hf_secret = modal.Secret.from_name("huggingface-token")
+    print("Successfully loaded Hugging Face token secret")
+except Exception as e:
+    print(f"Warning: Could not load Hugging Face token secret: {str(e)}")
+    print("The application will still work, but may not be able to access gated models.")
+    hf_secret = None
+
 # Create directories
-@app.function(image=image, volumes={VOLUME_PATH: volume})
+@app.function(
+    image=image, 
+    volumes={VOLUME_PATH: volume},
+    secrets=[hf_secret] if hf_secret is not None else []
+)
 def create_directories():
     # Create a directory for storing generated images
     os.makedirs(VOLUME_PATH, exist_ok=True)
     # List the contents of the volume
     contents = os.listdir(VOLUME_PATH)
     print(f"Contents of {VOLUME_PATH} after creating directory: {contents}")
+    
     return "Directories created"
 
 # Define the Stable Diffusion model class
-@app.cls(image=image, gpu="T4", timeout=600, volumes={VOLUME_PATH: volume})
+@app.cls(
+    image=image, 
+    gpu="A10G", 
+    timeout=900, 
+    volumes={VOLUME_PATH: volume},
+    secrets=[hf_secret] if hf_secret is not None else []
+)
 class StableDiffusionModel:
     def __init__(self):
-        self.model_id = "runwayml/stable-diffusion-v1-5"
+        self.model_id = "stabilityai/stable-diffusion-3.5-medium"
         print(f"StableDiffusionModel initialized with model_id: {self.model_id}")
+        
+        # Set Hugging Face token in environment if available
+        if "HF_TOKEN" in os.environ and os.environ["HF_TOKEN"]:
+            print("Hugging Face token found in environment")
+            # Set the token for the Hugging Face Hub library
+            os.environ["HUGGING_FACE_HUB_TOKEN"] = os.environ["HF_TOKEN"]
+        else:
+            print("WARNING: No Hugging Face token found in environment")
+        
         # Ensure the images directory exists
         os.makedirs(VOLUME_PATH, exist_ok=True)
         print(f"Contents of {VOLUME_PATH} in StableDiffusionModel.__init__: {os.listdir(VOLUME_PATH)}")
@@ -71,14 +106,14 @@ class StableDiffusionModel:
         self,
         prompt: str,
         output_path: str,
-        width: int = 512,
-        height: int = 512,
-        num_inference_steps: int = 50,
-        guidance_scale: float = 7.5,
+        width: int = 1024,
+        height: int = 1024,
+        num_inference_steps: int = 30,
+        guidance_scale: float = 8.0,
         negative_prompt: Optional[str] = None,
     ):
         """
-        Generate an image from a text prompt using Stable Diffusion.
+        Generate an image from a text prompt using Stable Diffusion 3.5.
         
         Args:
             prompt: The text prompt to generate an image from
@@ -94,8 +129,9 @@ class StableDiffusionModel:
         """
         try:
             import torch
-            from diffusers import StableDiffusionPipeline
+            from diffusers import DiffusionPipeline, AutoencoderKL
             from PIL import Image
+            import huggingface_hub
             
             # Print some information
             print(f"Generating image for prompt: {prompt}")
@@ -103,20 +139,28 @@ class StableDiffusionModel:
             print(f"Width: {width}, Height: {height}")
             print(f"Steps: {num_inference_steps}, Guidance scale: {guidance_scale}")
             
+            # Check if we have a Hugging Face token
+            if "HUGGING_FACE_HUB_TOKEN" in os.environ and os.environ["HUGGING_FACE_HUB_TOKEN"]:
+                print("Using Hugging Face token for authentication")
+                huggingface_hub.login(token=os.environ["HUGGING_FACE_HUB_TOKEN"])
+            
             # Start timing
             start_time = time.time()
             
-            # Initialize the pipeline
-            print("Initializing StableDiffusionPipeline...")
-            pipe = StableDiffusionPipeline.from_pretrained(
-                "runwayml/stable-diffusion-v1-5",
+            # Initialize the pipeline directly from Hugging Face
+            print(f"Initializing DiffusionPipeline from Hugging Face: {self.model_id}")
+            pipe = DiffusionPipeline.from_pretrained(
+                self.model_id,
                 torch_dtype=torch.float16,
+                use_safetensors=True,
+                variant="fp16",
             )
+            
             print("Moving pipeline to CUDA...")
             pipe = pipe.to("cuda")
             
             # Generate the image
-            print("Generating image...")
+            print("Generating image with SD 3.5...")
             image = pipe(
                 prompt=prompt,
                 negative_prompt=negative_prompt,
@@ -195,24 +239,24 @@ async def read_root():
                     <div class="form-row">
                         <div class="form-group">
                             <label for="width">Width</label>
-                            <input type="number" id="width" name="width" value="512" min="256" max="1024" step="64">
+                            <input type="number" id="width" name="width" value="1024" min="256" max="1024" step="64">
                         </div>
                         
                         <div class="form-group">
                             <label for="height">Height</label>
-                            <input type="number" id="height" name="height" value="512" min="256" max="1024" step="64">
+                            <input type="number" id="height" name="height" value="1024" min="256" max="1024" step="64">
                         </div>
                     </div>
                     
                     <div class="form-row">
                         <div class="form-group">
                             <label for="steps">Steps</label>
-                            <input type="number" id="steps" name="num_inference_steps" value="50" min="10" max="150">
+                            <input type="number" id="steps" name="num_inference_steps" value="30" min="10" max="150">
                         </div>
                         
                         <div class="form-group">
                             <label for="guidance">Guidance Scale</label>
-                            <input type="number" id="guidance" name="guidance_scale" value="7.5" min="1" max="20" step="0.5">
+                            <input type="number" id="guidance" name="guidance_scale" value="8.0" min="1" max="20" step="0.5">
                         </div>
                     </div>
                     
@@ -571,9 +615,9 @@ async def api_root():
     return {"message": "Welcome to the Stable Diffusion API"}
 
 @fastapi_app.post("/generate")
-async def generate_image(prompt: str, width: int = 512, height: int = 512, num_inference_steps: int = 50, guidance_scale: float = 7.5):
+async def generate_image(prompt: str, width: int = 1024, height: int = 1024, num_inference_steps: int = 30, guidance_scale: float = 8.0):
     """
-    Generate an image from a text prompt using Stable Diffusion.
+    Generate an image from a text prompt using Stable Diffusion 3.5.
     
     Args:
         prompt: The text prompt to generate an image from
@@ -647,17 +691,15 @@ async def get_image(image_id: str):
     return FileResponse(image_path)
 
 # Mount the FastAPI app to Modal
-@app.function(image=image, volumes={VOLUME_PATH: volume})
+@app.function(
+    image=image, 
+    volumes={VOLUME_PATH: volume},
+    secrets=[hf_secret] if hf_secret is not None else []
+)
 @modal.asgi_app()
 def serve_app():
     # Create directories before serving the app
     create_directories.remote()
-    # List the contents of the volume
-    try:
-        contents = os.listdir(VOLUME_PATH)
-        print(f"Contents of {VOLUME_PATH} in serve_app: {contents}")
-    except Exception as e:
-        print(f"Error listing directory contents in serve_app: {str(e)}")
     return fastapi_app
 
 if __name__ == "__main__":
