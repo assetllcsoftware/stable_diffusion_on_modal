@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stable Diffusion Image Generator</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Stable Diffusion Image Generator</h1>
+            <p>Generate images from text prompts using Stable Diffusion</p>
+        </header>
+        
+        <main>
+            <div class="form-container">
+                <form id="generation-form">
+                    <div class="form-group">
+                        <label for="prompt">Text Prompt</label>
+                        <textarea id="prompt" name="prompt" rows="3" placeholder="Enter a detailed description of the image you want to generate..." required></textarea>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="width">Width</label>
+                            <input type="number" id="width" name="width" value="512" min="256" max="1024" step="64">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="height">Height</label>
+                            <input type="number" id="height" name="height" value="512" min="256" max="1024" step="64">
+                        </div>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="steps">Steps</label>
+                            <input type="number" id="steps" name="num_inference_steps" value="50" min="10" max="150">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="guidance">Guidance Scale</label>
+                            <input type="number" id="guidance" name="guidance_scale" value="7.5" min="1" max="20" step="0.5">
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <button type="submit" id="generate-btn">Generate Image</button>
+                    </div>
+                </form>
+            </div>
+            
+            <div class="result-container">
+                <div id="loading" class="hidden">
+                    <div class="spinner"></div>
+                    <p>Generating image... This may take a minute.</p>
+                </div>
+                
+                <div id="result" class="hidden">
+                    <h2>Generated Image</h2>
+                    <div class="image-container">
+                        <img id="generated-image" src="" alt="Generated image">
+                    </div>
+                    <div class="actions">
+                        <button id="download-btn">Download Image</button>
+                        <button id="new-generation-btn">New Generation</button>
+                    </div>
+                </div>
+                
+                <div id="error" class="hidden">
+                    <p>An error occurred while generating the image. Please try again.</p>
+                </div>
+            </div>
+        </main>
+        
+        <footer>
+            <p>Powered by Modal and Stable Diffusion</p>
+        </footer>
+    </div>
+    
+    <script src="/static/js/script.js"></script>
+</body>
+</html> 
