@@ -39,4 +39,46 @@ images/
 
 # OS specific
 .DS_Store
-Thumbs.db 
+Thumbs.db
+
+# Large model files
+*.safetensors
+*.ckpt
+*.bin
+*.h5
+*.onnx
+*.pt
+*.pth
+
+# Temporary directories
+temp_models/
+tmp/
+
+# Private files
+secrets.json
+credentials.json
+
+# Upload scripts
+modal_upload.py
+mount_upload.py
+modal_direct_upload.py
+modal_direct_upload_fixed.py
+volume_upload.py
+simple_upload_sdxl.py
+upload_fixed.py
+upload_direct.py
+upload_illustrious_simple.py
+check_checkpoint.py
+check_uploaded_models.py
+
+# Non-working guides and setup scripts
+LORA_GUIDE.md
+SDXL_GUIDE.md
+setup_lora.py
+setup_sdxl.py
+upload_illustrious.py
+upload_illustrious_xl.py
+test_model.py
+test_sd_directly.py
+set_token.py
+check_token.py 

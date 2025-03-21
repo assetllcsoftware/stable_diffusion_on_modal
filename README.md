@@ -1,10 +1,11 @@
-# Stable Diffusion on Modal
+# Stable Diffusion XL on Modal
 
-A serverless image generation service using Stable Diffusion 3.5 and Modal. This application allows you to generate high-quality images from text prompts using the power of Stable Diffusion 3.5, with all the heavy computation handled in the cloud via Modal's serverless platform.
+A serverless image generation service using Stable Diffusion XL (Illustrious) and Modal. This application allows you to generate high-quality images from text prompts using the power of Stable Diffusion XL, with all the heavy computation handled in the cloud via Modal's serverless platform.
 
 ## Features
 
-- Generate images from text prompts using Stable Diffusion 3.5 (Medium)
+- Generate images from text prompts using Stable Diffusion XL (Illustrious checkpoint)
+- Automatic fallback to base SDXL if the custom checkpoint isn't available
 - Serverless deployment with Modal (no infrastructure management)
 - GPU acceleration with A10G GPUs for fast image generation
 - Clean, responsive web interface
@@ -16,8 +17,8 @@ A serverless image generation service using Stable Diffusion 3.5 and Modal. This
 ## Architecture
 
 - **Backend**: FastAPI application running on Modal's serverless platform
-- **ML Model**: Stable Diffusion 3.5 Medium from Hugging Face
-- **Storage**: Modal Volume for persistent storage of generated images
+- **ML Model**: Stable Diffusion XL with Illustrious checkpoint (fallback to base SDXL)
+- **Storage**: Modal Volumes for persistent storage of models and generated images
 - **Frontend**: Simple HTML/CSS/JS interface served by the FastAPI application
 
 ## Requirements
@@ -25,7 +26,7 @@ A serverless image generation service using Stable Diffusion 3.5 and Modal. This
 - Modal account
 - Python 3.10+
 - Pipenv
-- Hugging Face account with access to Stable Diffusion 3.5
+- Hugging Face account (for fallback access to base SDXL if needed)
 
 ## Setup
 
@@ -47,7 +48,7 @@ A serverless image generation service using Stable Diffusion 3.5 and Modal. This
    ```
    This will guide you through setting up your Modal account and authentication.
 
-4. Set up Hugging Face token (required for SD 3.5):
+4. Set up Hugging Face token (recommended for fallback):
    ```
    pipenv run python setup_hf_token.py
    ```
@@ -57,7 +58,18 @@ A serverless image generation service using Stable Diffusion 3.5 and Modal. This
    - Go to https://huggingface.co/ and sign in or create an account
    - Go to your profile → Settings → Access Tokens
    - Create a new token (read access is sufficient)
-   - Accept the terms for the Stable Diffusion 3.5 model at https://huggingface.co/stabilityai/stable-diffusion-3.5-medium
+
+5. Upload the Illustrious XL checkpoint:
+
+   Download the Illustrious XL checkpoint from Hugging Face or another source, then upload it to your Modal volume using the Modal CLI:
+   ```bash
+   modal volume put stable-diffusion-models illustriousXL_v01.safetensors /models/illustrious_xl.safetensors
+   ```
+   
+   You can verify the upload with:
+   ```bash
+   modal volume ls stable-diffusion-models /models
+   ```
 
 ## Deployment
 
@@ -75,7 +87,7 @@ After deployment, you'll receive a URL where your application is hosted (e.g., `
 3. Adjust parameters if desired:
    - Width and height (default: 1024x1024)
    - Number of inference steps (default: 30)
-   - Guidance scale (default: 8.0)
+   - Guidance scale (default: 7.5)
 4. Click "Generate Image" and wait for the result
 5. Download the generated image or create a new one
 
@@ -100,8 +112,9 @@ This will start the FastAPI application locally, but note that image generation 
 
 ## Technical Details
 
-- The application uses Stable Diffusion 3.5 Medium directly from Hugging Face
-- Authentication is handled via a Hugging Face token stored as a Modal secret
+- The application uses Stable Diffusion XL with the Illustrious checkpoint
+- Fallback to base SDXL from Hugging Face if the custom checkpoint isn't available
+- Authentication is handled via a Hugging Face token stored as a Modal secret (for fallback)
 - Images are generated with PyTorch using half-precision (FP16) for efficiency
 - Default image resolution is 1024x1024 for higher quality outputs
 - The model runs on A10G GPUs for faster processing

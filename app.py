@@ -40,6 +40,10 @@ app = modal.App("stable-diffusion-app")
 volume = modal.Volume.from_name("stable-diffusion-images", create_if_missing=True)
 VOLUME_PATH = "/images"
 
+# Create a volume for storing models
+model_volume = modal.Volume.from_name("stable-diffusion-models", create_if_missing=True)
+MODEL_VOLUME_PATH = "/models"
+
 # Create a FastAPI app
 fastapi_app = FastAPI(title="Stable Diffusion API")
 
@@ -64,15 +68,24 @@ except Exception as e:
 # Create directories
 @app.function(
     image=image, 
-    volumes={VOLUME_PATH: volume},
+    volumes={
+        VOLUME_PATH: volume,
+        MODEL_VOLUME_PATH: model_volume
+    },
     secrets=[hf_secret] if hf_secret is not None else []
 )
 def create_directories():
     # Create a directory for storing generated images
     os.makedirs(VOLUME_PATH, exist_ok=True)
-    # List the contents of the volume
-    contents = os.listdir(VOLUME_PATH)
-    print(f"Contents of {VOLUME_PATH} after creating directory: {contents}")
+    # Create a directory for models
+    os.makedirs(MODEL_VOLUME_PATH, exist_ok=True)
+    
+    # List the contents of the volumes
+    images_contents = os.listdir(VOLUME_PATH)
+    print(f"Contents of {VOLUME_PATH}: {images_contents}")
+    
+    models_contents = os.listdir(MODEL_VOLUME_PATH)
+    print(f"Contents of {MODEL_VOLUME_PATH}: {models_contents}")
     
     return "Directories created"
 
@@ -81,13 +94,17 @@ def create_directories():
     image=image, 
     gpu="A10G", 
     timeout=900, 
-    volumes={VOLUME_PATH: volume},
+    volumes={
+        VOLUME_PATH: volume,
+        MODEL_VOLUME_PATH: model_volume
+    },
     secrets=[hf_secret] if hf_secret is not None else []
 )
 class StableDiffusionModel:
     def __init__(self):
-        self.model_id = "stabilityai/stable-diffusion-3.5-medium"
-        print(f"StableDiffusionModel initialized with model_id: {self.model_id}")
+        # Use Illustrious XL checkpoint if available, otherwise fall back to HF
+        self.illustrious_path = f"{MODEL_VOLUME_PATH}/illustrious_xl.safetensors"
+        self.local_checkpoint_exists = False
         
         # Set Hugging Face token in environment if available
         if "HF_TOKEN" in os.environ and os.environ["HF_TOKEN"]:
@@ -97,9 +114,19 @@ class StableDiffusionModel:
         else:
             print("WARNING: No Hugging Face token found in environment")
         
-        # Ensure the images directory exists
+        # Ensure the directories exists
         os.makedirs(VOLUME_PATH, exist_ok=True)
-        print(f"Contents of {VOLUME_PATH} in StableDiffusionModel.__init__: {os.listdir(VOLUME_PATH)}")
+        os.makedirs(MODEL_VOLUME_PATH, exist_ok=True)
+        
+        # Check if we have the local Illustrious XL checkpoint
+        if os.path.exists(self.illustrious_path):
+            print(f"Found local Illustrious XL checkpoint at {self.illustrious_path}")
+            print(f"File size: {os.path.getsize(self.illustrious_path) / (1024 * 1024 * 1024):.2f} GB")
+            self.local_checkpoint_exists = True
+        else:
+            print(f"Local checkpoint not found at {self.illustrious_path}")
+            print(f"Will use SDXL from Hugging Face instead")
+            print(f"Contents of {MODEL_VOLUME_PATH}: {os.listdir(MODEL_VOLUME_PATH)}")
     
     @modal.method()
     def generate_image(
@@ -109,11 +136,11 @@ class StableDiffusionModel:
         width: int = 1024,
         height: int = 1024,
         num_inference_steps: int = 30,
-        guidance_scale: float = 8.0,
+        guidance_scale: float = 7.5,
         negative_prompt: Optional[str] = None,
     ):
         """
-        Generate an image from a text prompt using Stable Diffusion 3.5.
+        Generate an image from a text prompt using Stable Diffusion XL.
         
         Args:
             prompt: The text prompt to generate an image from
@@ -129,7 +156,7 @@ class StableDiffusionModel:
         """
         try:
             import torch
-            from diffusers import DiffusionPipeline, AutoencoderKL
+            from diffusers import StableDiffusionXLPipeline, AutoencoderKL
             from PIL import Image
             import huggingface_hub
             
@@ -147,20 +174,30 @@ class StableDiffusionModel:
             # Start timing
             start_time = time.time()
             
-            # Initialize the pipeline directly from Hugging Face
-            print(f"Initializing DiffusionPipeline from Hugging Face: {self.model_id}")
-            pipe = DiffusionPipeline.from_pretrained(
-                self.model_id,
-                torch_dtype=torch.float16,
-                use_safetensors=True,
-                variant="fp16",
-            )
+            # Initialize the pipeline
+            if self.local_checkpoint_exists:
+                print(f"Loading local Illustrious XL checkpoint from {self.illustrious_path}")
+                pipe = StableDiffusionXLPipeline.from_single_file(
+                    self.illustrious_path,
+                    torch_dtype=torch.float16,
+                    use_safetensors=True,
+                    variant="fp16",
+                )
+            else:
+                # Initialize the pipeline from Hugging Face
+                print("Loading SDXL from Hugging Face")
+                pipe = StableDiffusionXLPipeline.from_pretrained(
+                    "stabilityai/stable-diffusion-xl-base-1.0",
+                    torch_dtype=torch.float16,
+                    use_safetensors=True,
+                    variant="fp16",
+                )
             
             print("Moving pipeline to CUDA...")
             pipe = pipe.to("cuda")
             
             # Generate the image
-            print("Generating image with SD 3.5...")
+            print("Generating image with SDXL...")
             image = pipe(
                 prompt=prompt,
                 negative_prompt=negative_prompt,
@@ -217,15 +254,15 @@ async def read_root():
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Stable Diffusion Image Generator</title>
+    <title>Stable Diffusion XL Image Generator</title>
     <link rel="stylesheet" href="/static/css/style.css">
     <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>Stable Diffusion Image Generator</h1>
-            <p>Generate images from text prompts using Stable Diffusion</p>
+            <h1>Stable Diffusion XL Image Generator</h1>
+            <p>Generate images from text prompts using Stable Diffusion XL</p>
         </header>
         
         <main>
@@ -256,7 +293,7 @@ async def read_root():
                         
                         <div class="form-group">
                             <label for="guidance">Guidance Scale</label>
-                            <input type="number" id="guidance" name="guidance_scale" value="8.0" min="1" max="20" step="0.5">
+                            <input type="number" id="guidance" name="guidance_scale" value="7.5" min="1" max="20" step="0.5">
                         </div>
                     </div>
                     
@@ -291,7 +328,7 @@ async def read_root():
         </main>
         
         <footer>
-            <p>Powered by Modal and Stable Diffusion</p>
+            <p>Powered by Modal and Stable Diffusion XL</p>
         </footer>
     </div>
     
@@ -615,9 +652,9 @@ async def api_root():
     return {"message": "Welcome to the Stable Diffusion API"}
 
 @fastapi_app.post("/generate")
-async def generate_image(prompt: str, width: int = 1024, height: int = 1024, num_inference_steps: int = 30, guidance_scale: float = 8.0):
+async def generate_image(prompt: str, width: int = 1024, height: int = 1024, num_inference_steps: int = 30, guidance_scale: float = 7.5):
     """
-    Generate an image from a text prompt using Stable Diffusion 3.5.
+    Generate an image from a text prompt using Stable Diffusion XL.
     
     Args:
         prompt: The text prompt to generate an image from
@@ -693,7 +730,10 @@ async def get_image(image_id: str):
 # Mount the FastAPI app to Modal
 @app.function(
     image=image, 
-    volumes={VOLUME_PATH: volume},
+    volumes={
+        VOLUME_PATH: volume,
+        MODEL_VOLUME_PATH: model_volume
+    },
     secrets=[hf_secret] if hf_secret is not None else []
 )
 @modal.asgi_app()
